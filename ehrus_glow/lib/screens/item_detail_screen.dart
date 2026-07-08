@@ -1,3 +1,4 @@
+// lib/screens/item_detail_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -16,7 +17,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   int _quantity = 1;
   TextEditingController _customerController = TextEditingController();
   List<String> _customerSuggestions = [];
-  bool _isLoading = false;
+  bool _isSelling = false;
+  bool _isRestocking = false;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
+  // ==================== SELL ITEM ====================
   Future<void> _sellItem(Item item) async {
     if (item.stockQuantity < _quantity) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -51,7 +54,29 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    if (_customerController.text.trim().isEmpty) {
+      // Optional: Ask if they want to sell to walk-in
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('No Customer Name'),
+          content: const Text('Sell to walk-in customer?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Yes, Sell'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+    }
+
+    setState(() => _isSelling = true);
 
     try {
       String customerName = _customerController.text.trim();
@@ -85,6 +110,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
       await FirebaseFirestore.instance.collection('transactions').add({
         'item_id': widget.itemId,
         'item_name': item.name,
+        'category': item.category,
         'customer_id': customerId,
         'customer_name': customerName.isNotEmpty ? customerName : 'Walk-in',
         'quantity': _quantity,
@@ -113,23 +139,114 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         });
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ Sold $_quantity ${item.name} for ${AppConstants.formatMwk(totalRevenue)}'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      Navigator.pop(context, true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Sold $_quantity ${item.name} for ${AppConstants.formatMwk(totalRevenue)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context, true);
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error selling item: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isSelling = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // ==================== RESTOCK ITEM ====================
+  Future<void> _restockItem(Item item) async {
+    int addQty = 0;
+    final result = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Restock Item'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Current stock: ${item.stockQuantity}'),
+                const SizedBox(height: 8),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'How many to add?',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    addQty = int.tryParse(value) ?? 0;
+                    setDialogState(() {});
+                  },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'New stock will be: ${item.stockQuantity + addQty}',
+                  style: TextStyle(
+                    color: addQty > 0 ? Colors.green : Colors.grey,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: addQty > 0 ? () => Navigator.pop(context, addQty) : null,
+                style: TextButton.styleFrom(
+                  foregroundColor: addQty > 0 ? AppColors.gold : Colors.grey,
+                ),
+                child: const Text('Add Stock'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result == null || result <= 0) return;
+
+    setState(() => _isRestocking = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('items')
+          .doc(widget.itemId)
+          .update({
+        'stock_quantity': item.stockQuantity + result,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Added $result items to ${item.name}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        setState(() => _isRestocking = false);
+      }
+    } catch (e) {
+      setState(() => _isRestocking = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -232,56 +349,15 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: () {
-                          // Restock logic
-                          showDialog(
-                            context: context,
-                            builder: (context) {
-                              int addQty = 0;
-                              return AlertDialog(
-                                title: const Text('Restock Item'),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text('Current stock: ${item.stockQuantity}'),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      decoration: const InputDecoration(
-                                        labelText: 'How many to add?',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      keyboardType: TextInputType.number,
-                                      onChanged: (value) => addQty = int.tryParse(value) ?? 0,
-                                    ),
-                                  ],
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () async {
-                                      if (addQty > 0) {
-                                        await FirebaseFirestore.instance
-                                            .collection('items')
-                                            .doc(widget.itemId)
-                                            .update({
-                                          'stock_quantity': item.stockQuantity + addQty,
-                                        });
-                                        Navigator.pop(context);
-                                        setState(() {});
-                                      }
-                                    },
-                                    child: const Text('Add Stock'),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
-                        },
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Restock'),
+                        onPressed: _isRestocking ? null : () => _restockItem(item),
+                        icon: _isRestocking
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.add, size: 18),
+                        label: Text(_isRestocking ? 'Adding...' : 'Restock'),
                       ),
                     ],
                   ),
@@ -366,15 +442,22 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : () => _sellItem(item),
+                    onPressed: _isSelling ? null : () => _sellItem(item),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.gold,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
+                    child: _isSelling
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : Text(
                             'SELL - ${AppConstants.formatMwk(item.sellPrice * _quantity)}',
                             style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),

@@ -1,8 +1,10 @@
+// lib/screens/add_item_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
+import 'dart:async';  // ← ADD THIS FOR TimeoutException
 import '../utils/constants.dart';
 
 class AddItemScreen extends StatefulWidget {
@@ -21,37 +23,111 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final _stockController = TextEditingController();
   
   File? _imageFile;
-  bool _isLoading = false;
+  bool _isSaving = false;
+  String? _errorMessage;
 
   final List<String> _categories = ['Necklace', 'Ring', 'Earrings', 'Bracelet', 'Anklet', 'Other'];
 
   Future<void> _pickImage() async {
     try {
       final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800, maxHeight: 800);
+      final pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 80,
+      );
       if (pickedFile != null) {
         setState(() => _imageFile = File(pickedFile.path));
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error picking image')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error picking image')),
+      );
     }
   }
 
+  // ============================================================
+  // FIXED: _saveItem() with Timeout for proper error diagnosis
+  // ============================================================
   Future<void> _saveItem() async {
+    // Validate form
     if (!_formKey.currentState!.validate()) return;
+    if (_isSaving) return;
     
-    setState(() => _isLoading = true);
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
     
     try {
+      // ============================================================
+      // STEP 1: Upload Image to Firebase Storage (if any)
+      // ============================================================
       String? photoUrl;
       if (_imageFile != null) {
-        final fileName = DateTime.now().millisecondsSinceEpoch.toString();
-        final ref = FirebaseStorage.instance.ref().child('items/$fileName.jpg');
-        final uploadTask = ref.putFile(_imageFile!);
-        final snapshot = await uploadTask.whenComplete(() => null);
-        photoUrl = await snapshot.ref.getDownloadURL();
+        try {
+          print('📸 Starting image upload...');
+          
+          final fileName = DateTime.now().millisecondsSinceEpoch.toString();
+          final ref = FirebaseStorage.instance.ref().child('items/$fileName.jpg');
+          
+          // Upload with timeout
+          final uploadTask = ref.putFile(_imageFile!);
+          final snapshot = await uploadTask.whenComplete(() => null).timeout(
+            const Duration(seconds: 30),
+            onTimeout: () {
+              throw TimeoutException('⏰ Image upload timed out after 30 seconds');
+            },
+          );
+          
+          print('✅ Image uploaded successfully');
+          
+          // Get download URL with timeout
+          photoUrl = await snapshot.ref.getDownloadURL().timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException('⏰ Getting download URL timed out');
+            },
+          );
+          
+          print('📎 Download URL: $photoUrl');
+          
+        } on TimeoutException catch (e) {
+          // This catches the timeout specifically
+          print('❌ TIMEOUT: $e');
+          setState(() {
+            _isSaving = false;
+            _errorMessage = '⏰ Image upload timed out. Please try again.';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⏰ Image upload timed out. Please try again.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        } catch (e) {
+          print('❌ IMAGE UPLOAD ERROR: $e');
+          setState(() {
+            _isSaving = false;
+            _errorMessage = 'Image upload failed: $e';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Image upload failed: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
       }
 
+      // ============================================================
+      // STEP 2: Save to Firestore with Timeout
+      // ============================================================
+      print('💾 Starting Firestore save...');
+      
       await FirebaseFirestore.instance.collection('items').add({
         'name': _nameController.text.trim(),
         'category': _selectedCategory,
@@ -64,22 +140,70 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'low_stock_alert': 3,
         'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
-      });
+      }).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw TimeoutException('⏰ Firestore save timed out after 15 seconds');
+        },
+      );
+
+      print('✅ Item saved to Firestore successfully!');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Item added successfully!'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('✅ Item added successfully!'),
+            backgroundColor: Colors.green,
+          ),
         );
         Navigator.pop(context, true);
       }
-    } catch (e) {
+      
+    } on TimeoutException catch (e) {
+      // ============================================================
+      // TIMEOUT ERROR - This is the key diagnostic!
+      // ============================================================
+      print('❌❌❌ TIMEOUT EXCEPTION: $e');
+      print('👉 This means Firestore/Storage is NOT responding to the server.');
+      print('👉 The data was saved locally but the server never acknowledged.');
+      print('👉 Check:');
+      print('   - Firewall blocking localhost');
+      print('   - Ad blocker / extension blocking Firebase');
+      print('   - Firebase Security Rules blocking the write');
+      print('   - Network connectivity to firestore.googleapis.com');
+      
+      setState(() {
+        _isSaving = false;
+        _errorMessage = '⏰ Request timed out. Please check your connection and try again.';
+      });
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          const SnackBar(
+            content: Text('⏰ Request timed out. Check console for details.'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
-    } finally {
-      setState(() => _isLoading = false);
+      
+    } catch (e) {
+      // ============================================================
+      // OTHER ERRORS
+      // ============================================================
+      print('❌ GENERAL ERROR: $e');
+      setState(() {
+        _isSaving = false;
+        _errorMessage = 'Error: $e';
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -92,15 +216,43 @@ class _AddItemScreenState extends State<AddItemScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: AppColors.charcoal),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (!_isSaving) Navigator.pop(context);
+          },
         ),
         title: const Text(
           'Add New Item',
           style: TextStyle(color: AppColors.charcoal, fontWeight: FontWeight.w600),
         ),
+        actions: [
+          if (_imageFile != null && !_isSaving)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: () => setState(() => _imageFile = null),
+            ),
+        ],
       ),
-      body: _isLoading 
-          ? const Center(child: CircularProgressIndicator())
+      body: _isSaving
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.gold),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    'Saving your item... ✨',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'This may take a few seconds',
+                    style: TextStyle(color: AppColors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
+            )
           : Padding(
               padding: const EdgeInsets.all(20.0),
               child: Form(
@@ -118,31 +270,81 @@ class _AddItemScreenState extends State<AddItemScreen> {
                           decoration: BoxDecoration(
                             color: AppColors.goldLight,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.gold, width: 1),
+                            border: Border.all(color: AppColors.gold, width: 2),
                           ),
                           child: _imageFile != null
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: Image.file(_imageFile!, fit: BoxFit.cover),
+                                  child: Image.file(
+                                    _imageFile!,
+                                    fit: BoxFit.cover,
+                                  ),
                                 )
                               : Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.add_photo_alternate, color: AppColors.gold, size: 40),
+                                    Icon(
+                                      Icons.add_photo_alternate,
+                                      color: AppColors.gold,
+                                      size: 50,
+                                    ),
                                     const SizedBox(height: 8),
-                                    Text('Tap to add photo', style: TextStyle(color: AppColors.gold)),
+                                    Text(
+                                      'Tap to add photo',
+                                      style: TextStyle(
+                                        color: AppColors.gold,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Recommended: Square image',
+                                      style: TextStyle(
+                                        color: AppColors.grey,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   ],
                                 ),
                         ),
                       ),
                       const SizedBox(height: 20),
 
+                      // Error Message
+                      if (_errorMessage != null) ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.shade300),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.error_outline, color: Colors.red.shade700),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _errorMessage!,
+                                  style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
                       // Name
                       TextFormField(
                         controller: _nameController,
+                        enabled: !_isSaving,
                         decoration: const InputDecoration(
-                          labelText: 'Item Name',
+                          labelText: 'Item Name *',
+                          hintText: 'e.g., Gold Floral Necklace',
                           border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.label_outline),
+                          filled: true,
+                          fillColor: Colors.white,
                         ),
                         validator: (value) => value!.isEmpty ? 'Please enter a name' : null,
                       ),
@@ -152,72 +354,146 @@ class _AddItemScreenState extends State<AddItemScreen> {
                       DropdownButtonFormField<String>(
                         value: _selectedCategory,
                         decoration: const InputDecoration(
-                          labelText: 'Category',
+                          labelText: 'Category *',
                           border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.category_outlined),
+                          filled: true,
+                          fillColor: Colors.white,
                         ),
                         items: _categories.map((category) {
                           return DropdownMenuItem(
                             value: category,
-                            child: Text(category),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _getCategoryIcon(category),
+                                  size: 18,
+                                  color: AppColors.gold,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(category),
+                              ],
+                            ),
                           );
                         }).toList(),
-                        onChanged: (value) => setState(() => _selectedCategory = value!),
+                        onChanged: _isSaving ? null : (value) => setState(() => _selectedCategory = value!),
                       ),
                       const SizedBox(height: 16),
 
-                      // Cost Price
-                      TextFormField(
-                        controller: _costPriceController,
-                        decoration: const InputDecoration(
-                          labelText: 'Cost Price (MWK)',
-                          border: OutlineInputBorder(),
-                          prefixText: 'MK ',
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) => value!.isEmpty ? 'Enter cost price' : null,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _costPriceController,
+                              enabled: !_isSaving,
+                              decoration: const InputDecoration(
+                                labelText: 'Cost Price *',
+                                hintText: 'e.g., 172500',
+                                border: OutlineInputBorder(),
+                                prefixText: 'MK ',
+                                filled: true,
+                                fillColor: Colors.white,
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) => value!.isEmpty ? 'Enter cost price' : null,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _sellPriceController,
+                              enabled: !_isSaving,
+                              decoration: const InputDecoration(
+                                labelText: 'Selling Price *',
+                                hintText: 'e.g., 460000',
+                                border: OutlineInputBorder(),
+                                prefixText: 'MK ',
+                                filled: true,
+                                fillColor: Colors.white,
+                              ),
+                              keyboardType: TextInputType.number,
+                              validator: (value) => value!.isEmpty ? 'Enter selling price' : null,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
 
-                      // Selling Price
-                      TextFormField(
-                        controller: _sellPriceController,
-                        decoration: const InputDecoration(
-                          labelText: 'Selling Price (MWK)',
-                          border: OutlineInputBorder(),
-                          prefixText: 'MK ',
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) => value!.isEmpty ? 'Enter selling price' : null,
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Stock
                       TextFormField(
                         controller: _stockController,
+                        enabled: !_isSaving,
                         decoration: const InputDecoration(
-                          labelText: 'Initial Stock',
+                          labelText: 'Initial Stock *',
+                          hintText: 'e.g., 10',
                           border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.inventory_outlined),
+                          filled: true,
+                          fillColor: Colors.white,
                         ),
                         keyboardType: TextInputType.number,
                         validator: (value) => value!.isEmpty ? 'Enter stock quantity' : null,
                       ),
                       const SizedBox(height: 24),
 
+                      // Preview Profit
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppColors.goldLight.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.goldLight),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Profit per item:',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              AppConstants.formatMwk(
+                                (int.tryParse(_sellPriceController.text) ?? 0) - 
+                                (int.tryParse(_costPriceController.text) ?? 0)
+                              ),
+                              style: TextStyle(
+                                color: AppColors.gold,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
                       SizedBox(
                         width: double.infinity,
-                        height: 50,
+                        height: 56,
                         child: ElevatedButton(
-                          onPressed: _saveItem,
+                          onPressed: _isSaving ? null : _saveItem,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.gold,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Text(
-                            'Save Item',
-                            style: TextStyle(color: Colors.white, fontSize: 16),
-                          ),
+                          child: _isSaving
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  '💎 Save Item',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                         ),
                       ),
                     ],
@@ -226,5 +502,25 @@ class _AddItemScreenState extends State<AddItemScreen> {
               ),
             ),
     );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Necklace': return Icons.circle_outlined;
+      case 'Ring': return Icons.circle;
+      case 'Earrings': return Icons.bolt;
+      case 'Bracelet': return Icons.timeline;
+      case 'Anklet': return Icons.settings_ethernet;
+      default: return Icons.category_outlined;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _costPriceController.dispose();
+    _sellPriceController.dispose();
+    _stockController.dispose();
+    super.dispose();
   }
 }

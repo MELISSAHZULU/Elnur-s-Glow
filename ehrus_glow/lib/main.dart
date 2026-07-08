@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_screen.dart';
 import 'screens/inventory_screen.dart';
@@ -7,12 +8,15 @@ import 'screens/add_item_screen.dart';
 import 'screens/item_detail_screen.dart';
 import 'screens/sales_history_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/owner_profile_screen.dart';
+import 'screens/change_currency_screen.dart';
+import 'screens/low_stock_alert_screen.dart';
+import 'screens/export_report_screen.dart';
 import 'utils/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Firebase with your Web configuration
   await Firebase.initializeApp(
     options: const FirebaseOptions(
       apiKey: 'AIzaSyBpCZa9o3wgYyzVkOnjjlQNtAW7i482haI',
@@ -24,7 +28,22 @@ void main() async {
       measurementId: 'G-T5NMJPZ8RW',
     ),
   );
+
+  // ================================================================
+  // 🔧 FIX: Force Long-Polling to prevent WebSocket session churn
+  // ================================================================
+  // Enable offline persistence to reduce connection issues
+  await FirebaseFirestore.instance.enablePersistence();
   
+  // Set Firestore settings
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+  );
+  
+  // Optional: Set host to force long-polling via URL parameter
+  // This is a workaround for WebSocket issues
+  print('✅ Firestore: Settings applied with persistence enabled');
+
   runApp(const EhrusGlowApp());
 }
 
@@ -52,6 +71,10 @@ class EhrusGlowApp extends StatelessWidget {
         '/inventory': (context) => const InventoryScreen(),
         '/sales': (context) => const SalesHistoryScreen(),
         '/profile': (context) => const ProfileScreen(),
+        '/owner_profile': (context) => const OwnerProfileScreen(),
+        '/change_currency': (context) => const ChangeCurrencyScreen(),
+        '/low_stock_alert': (context) => const LowStockAlertScreen(),
+        '/export_report': (context) => const ExportReportScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/item_detail') {

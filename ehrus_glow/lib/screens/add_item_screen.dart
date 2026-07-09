@@ -1,10 +1,6 @@
-// lib/screens/add_item_screen.dart
+// lib/screens/add_item_screen.dart - WITHOUT PHOTO UPLOAD
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'dart:io';
-import 'dart:async';  // ← ADD THIS FOR TimeoutException
 import '../utils/constants.dart';
 
 class AddItemScreen extends StatefulWidget {
@@ -22,36 +18,12 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final _sellPriceController = TextEditingController();
   final _stockController = TextEditingController();
   
-  File? _imageFile;
   bool _isSaving = false;
   String? _errorMessage;
 
   final List<String> _categories = ['Necklace', 'Ring', 'Earrings', 'Bracelet', 'Anklet', 'Other'];
 
-  Future<void> _pickImage() async {
-    try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 800,
-        imageQuality: 80,
-      );
-      if (pickedFile != null) {
-        setState(() => _imageFile = File(pickedFile.path));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error picking image')),
-      );
-    }
-  }
-
-  // ============================================================
-  // FIXED: _saveItem() with Timeout for proper error diagnosis
-  // ============================================================
   Future<void> _saveItem() async {
-    // Validate form
     if (!_formKey.currentState!.validate()) return;
     if (_isSaving) return;
     
@@ -61,74 +33,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
     });
     
     try {
-      // ============================================================
-      // STEP 1: Upload Image to Firebase Storage (if any)
-      // ============================================================
-      String? photoUrl;
-      if (_imageFile != null) {
-        try {
-          print('📸 Starting image upload...');
-          
-          final fileName = DateTime.now().millisecondsSinceEpoch.toString();
-          final ref = FirebaseStorage.instance.ref().child('items/$fileName.jpg');
-          
-          // Upload with timeout
-          final uploadTask = ref.putFile(_imageFile!);
-          final snapshot = await uploadTask.whenComplete(() => null).timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw TimeoutException('⏰ Image upload timed out after 30 seconds');
-            },
-          );
-          
-          print('✅ Image uploaded successfully');
-          
-          // Get download URL with timeout
-          photoUrl = await snapshot.ref.getDownloadURL().timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              throw TimeoutException('⏰ Getting download URL timed out');
-            },
-          );
-          
-          print('📎 Download URL: $photoUrl');
-          
-        } on TimeoutException catch (e) {
-          // This catches the timeout specifically
-          print('❌ TIMEOUT: $e');
-          setState(() {
-            _isSaving = false;
-            _errorMessage = '⏰ Image upload timed out. Please try again.';
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('⏰ Image upload timed out. Please try again.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        } catch (e) {
-          print('❌ IMAGE UPLOAD ERROR: $e');
-          setState(() {
-            _isSaving = false;
-            _errorMessage = 'Image upload failed: $e';
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Image upload failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-      }
-
-      // ============================================================
-      // STEP 2: Save to Firestore with Timeout
-      // ============================================================
-      print('💾 Starting Firestore save...');
-      
-      await FirebaseFirestore.instance.collection('items').add({
+      // Save to Firestore (NO PHOTO)
+      final itemData = {
         'name': _nameController.text.trim(),
         'category': _selectedCategory,
         'description': '',
@@ -136,18 +42,14 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'sell_price': int.parse(_sellPriceController.text),
         'profit': int.parse(_sellPriceController.text) - int.parse(_costPriceController.text),
         'stock_quantity': int.parse(_stockController.text),
-        'photo_url': photoUrl,
+        'photo_url': null,  // ← No photo
         'low_stock_alert': 3,
         'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
-      }).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw TimeoutException('⏰ Firestore save timed out after 15 seconds');
-        },
-      );
-
-      print('✅ Item saved to Firestore successfully!');
+      };
+      
+      await FirebaseFirestore.instance.collection('items').add(itemData);
+      print('✅ Item saved successfully!');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -159,38 +61,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
         Navigator.pop(context, true);
       }
       
-    } on TimeoutException catch (e) {
-      // ============================================================
-      // TIMEOUT ERROR - This is the key diagnostic!
-      // ============================================================
-      print('❌❌❌ TIMEOUT EXCEPTION: $e');
-      print('👉 This means Firestore/Storage is NOT responding to the server.');
-      print('👉 The data was saved locally but the server never acknowledged.');
-      print('👉 Check:');
-      print('   - Firewall blocking localhost');
-      print('   - Ad blocker / extension blocking Firebase');
-      print('   - Firebase Security Rules blocking the write');
-      print('   - Network connectivity to firestore.googleapis.com');
-      
-      setState(() {
-        _isSaving = false;
-        _errorMessage = '⏰ Request timed out. Please check your connection and try again.';
-      });
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('⏰ Request timed out. Check console for details.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      
     } catch (e) {
-      // ============================================================
-      // OTHER ERRORS
-      // ============================================================
-      print('❌ GENERAL ERROR: $e');
+      print('❌ Save error: $e');
       setState(() {
         _isSaving = false;
         _errorMessage = 'Error: $e';
@@ -199,7 +71,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('❌ Error: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -224,13 +96,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
           'Add New Item',
           style: TextStyle(color: AppColors.charcoal, fontWeight: FontWeight.w600),
         ),
-        actions: [
-          if (_imageFile != null && !_isSaving)
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              onPressed: () => setState(() => _imageFile = null),
-            ),
-        ],
       ),
       body: _isSaving
           ? const Center(
@@ -241,15 +106,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                     valueColor: AlwaysStoppedAnimation<Color>(AppColors.gold),
                   ),
                   SizedBox(height: 16),
-                  Text(
-                    'Saving your item... ✨',
-                    style: TextStyle(fontSize: 16),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'This may take a few seconds',
-                    style: TextStyle(color: AppColors.grey, fontSize: 12),
-                  ),
+                  Text('Saving your item... ✨'),
                 ],
               ),
             )
@@ -261,54 +118,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Image Picker
-                      GestureDetector(
-                        onTap: _pickImage,
-                        child: Container(
-                          height: 150,
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: AppColors.goldLight,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.gold, width: 2),
-                          ),
-                          child: _imageFile != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Image.file(
-                                    _imageFile!,
-                                    fit: BoxFit.cover,
-                                  ),
-                                )
-                              : Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.add_photo_alternate,
-                                      color: AppColors.gold,
-                                      size: 50,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Tap to add photo',
-                                      style: TextStyle(
-                                        color: AppColors.gold,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    Text(
-                                      'Recommended: Square image',
-                                      style: TextStyle(
-                                        color: AppColors.grey,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-
                       // Error Message
                       if (_errorMessage != null) ...[
                         Container(
@@ -466,6 +275,30 @@ class _AddItemScreenState extends State<AddItemScreen> {
                       ),
                       const SizedBox(height: 24),
 
+                      // Info: No photo because Storage requires payment
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.blue.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '📸 Photos are disabled. Upgrade to Blaze plan to add photos.',
+                                style: TextStyle(color: Colors.blue.shade800, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Save Button
                       SizedBox(
                         width: double.infinity,
                         height: 56,

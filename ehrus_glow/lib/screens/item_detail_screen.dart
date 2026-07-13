@@ -1,4 +1,4 @@
-// lib/screens/item_detail_screen.dart - WITH EDIT & DELETE
+// lib/screens/item_detail_screen.dart - COMPLETE FIXED VERSION
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -15,21 +15,78 @@ class ItemDetailScreen extends StatefulWidget {
 
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
   int _quantity = 1;
-  TextEditingController _customerController = TextEditingController();
+  final TextEditingController _customerController = TextEditingController();
   List<String> _customerSuggestions = [];
+  List<String> _filteredSuggestions = [];
+  bool _showSuggestions = false;
   bool _isSelling = false;
   bool _isRestocking = false;
   bool _isDeleting = false;
+  
+  final FocusNode _customerFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomerSuggestions();
+  }
+
+  @override
+  void dispose() {
+    _customerController.dispose();
+    _customerFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _loadCustomerSuggestions() async {
+    try {
+      var snapshot = await FirebaseFirestore.instance
+          .collection('customers')
+          .orderBy('name')
+          .limit(20)
+          .get();
+      
+      setState(() {
+        _customerSuggestions = snapshot.docs.map((doc) => doc['name'] as String).toList();
+      });
+    } catch (e) {
+      // Silently fail
+    }
+  }
+
+  void _onCustomerTextChanged(String value) {
+    if (value.isEmpty) {
+      _filteredSuggestions = [];
+      _showSuggestions = false;
+    } else {
+      _filteredSuggestions = _customerSuggestions
+          .where((name) => name.toLowerCase().contains(value.toLowerCase()))
+          .toList();
+      _showSuggestions = _filteredSuggestions.isNotEmpty;
+    }
+    setState(() {});
+  }
+
+  void _selectCustomer(String name) {
+    setState(() {
+      _customerController.text = name;
+      _showSuggestions = false;
+      _filteredSuggestions = [];
+    });
+    _customerFocusNode.unfocus();
+  }
 
   // ============================================================
-  // EDIT ITEM - Navigate to Edit Screen
+  // EDIT ITEM
   // ============================================================
   Future<void> _editItem(Item item) async {
-    // Show a simple edit dialog
     final nameController = TextEditingController(text: item.name);
+    final descController = TextEditingController(text: item.description ?? '');
     final costController = TextEditingController(text: item.costPrice.toString());
     final sellController = TextEditingController(text: item.sellPrice.toString());
     final stockController = TextEditingController(text: item.stockQuantity.toString());
+    String selectedCategory = item.category;
+    final List<String> categories = ['Necklace', 'Ring', 'Earrings', 'Bracelet', 'Anklet', 'Other'];
     
     final result = await showDialog<bool>(
       context: context,
@@ -41,21 +98,56 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             children: [
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(labelText: 'Item Name'),
+                decoration: const InputDecoration(labelText: 'Item Name *'),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  hintText: 'e.g., Rose gold plated with crystal center',
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedCategory,
+                decoration: const InputDecoration(
+                  labelText: 'Category *',
+                  border: OutlineInputBorder(),
+                ),
+                items: categories.map((category) {
+                  return DropdownMenuItem(
+                    value: category,
+                    child: Text(category),
+                  );
+                }).toList(),
+                onChanged: (value) => selectedCategory = value!,
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: costController,
-                decoration: const InputDecoration(labelText: 'Cost Price (MWK)'),
+                decoration: const InputDecoration(
+                  labelText: 'Cost Price (MWK) *',
+                  prefixText: 'MK ',
+                ),
                 keyboardType: TextInputType.number,
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: sellController,
-                decoration: const InputDecoration(labelText: 'Selling Price (MWK)'),
+                decoration: const InputDecoration(
+                  labelText: 'Selling Price (MWK) *',
+                  prefixText: 'MK ',
+                ),
                 keyboardType: TextInputType.number,
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: stockController,
-                decoration: const InputDecoration(labelText: 'Stock Quantity'),
+                decoration: const InputDecoration(
+                  labelText: 'Stock Quantity *',
+                ),
                 keyboardType: TextInputType.number,
               ),
             ],
@@ -78,12 +170,21 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     );
     
     if (result == true) {
+      if (nameController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a name'), backgroundColor: Colors.red),
+        );
+        return;
+      }
+      
       try {
         await FirebaseFirestore.instance
             .collection('items')
             .doc(widget.itemId)
             .update({
           'name': nameController.text.trim(),
+          'description': descController.text.trim(),
+          'category': selectedCategory,
           'cost_price': int.parse(costController.text),
           'sell_price': int.parse(sellController.text),
           'profit': int.parse(sellController.text) - int.parse(costController.text),
@@ -381,28 +482,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadCustomerSuggestions();
-  }
-
-  void _loadCustomerSuggestions() async {
-    try {
-      var snapshot = await FirebaseFirestore.instance
-          .collection('customers')
-          .orderBy('name')
-          .limit(10)
-          .get();
-      
-      setState(() {
-        _customerSuggestions = snapshot.docs.map((doc) => doc['name'] as String).toList();
-      });
-    } catch (e) {
-      // Silently fail
-    }
-  }
-
+  // ============================================================
+  // BUILD UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -419,9 +501,6 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           style: TextStyle(color: AppColors.charcoal, fontWeight: FontWeight.w600),
         ),
         actions: [
-          // ============================================================
-          // EDIT BUTTON
-          // ============================================================
           IconButton(
             icon: const Icon(Icons.edit_outlined, color: AppColors.gold),
             onPressed: () async {
@@ -435,9 +514,6 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             },
             tooltip: 'Edit Item',
           ),
-          // ============================================================
-          // DELETE BUTTON
-          // ============================================================
           IconButton(
             icon: _isDeleting
                 ? const SizedBox(
@@ -487,18 +563,62 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                // Item Name
                 Text(
                   item.name,
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.charcoal),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.charcoal,
+                  ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
+
+                // Category
                 Text(
                   item.category,
-                  style: TextStyle(fontSize: 14, color: AppColors.grey),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.grey,
+                  ),
                 ),
+                
+                // Description
+                if (item.description != null && item.description.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.description_outlined,
+                          size: 18,
+                          color: AppColors.gold,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            item.description,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: AppColors.charcoal.withOpacity(0.8),
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 20),
 
-                // Cost, Price, Profit
+                // Cost, Price, Profit Cards
                 Row(
                   children: [
                     _buildInfoCard('COST', item.formattedCostPrice, Colors.grey),
@@ -510,23 +630,39 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Stock
+                // Stock Section
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'STOCK: ${item.stockQuantity} remaining',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: item.isLowStock ? Colors.red : AppColors.charcoal,
-                        ),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.inventory_2_outlined,
+                            color: item.isLowStock ? Colors.red : AppColors.charcoal,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'STOCK: ${item.stockQuantity} remaining',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: item.isLowStock ? Colors.red : AppColors.charcoal,
+                            ),
+                          ),
+                        ],
                       ),
                       TextButton.icon(
                         onPressed: _isRestocking ? null : () => _restockItem(item),
@@ -538,6 +674,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                               )
                             : const Icon(Icons.add, size: 18),
                         label: Text(_isRestocking ? 'Adding...' : 'Restock'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.gold,
+                        ),
                       ),
                     ],
                   ),
@@ -550,7 +689,11 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 // SELL Section
                 const Text(
                   'SELL',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.charcoal),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.charcoal,
+                  ),
                 ),
                 const SizedBox(height: 12),
 
@@ -575,12 +718,20 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                           SizedBox(
                             width: 40,
                             child: Center(
-                              child: Text('$_quantity', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              child: Text(
+                                '$_quantity',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                           IconButton(
                             icon: const Icon(Icons.add, size: 20),
-                            onPressed: _quantity < item.stockQuantity ? () => setState(() => _quantity++) : null,
+                            onPressed: _quantity < item.stockQuantity
+                                ? () => setState(() => _quantity++)
+                                : null,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
@@ -591,29 +742,54 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Customer Name
-                const Text('Customer Name (Optional)', style: TextStyle(fontSize: 14, color: AppColors.grey)),
+                // ============================================================
+                // CUSTOMER NAME - FIXED: ListTile warning fixed with Material
+                // ============================================================
+                const Text(
+                  'Customer Name (Optional)',
+                  style: TextStyle(fontSize: 14, color: AppColors.grey),
+                ),
                 const SizedBox(height: 4),
-                Autocomplete<String>(
-                  optionsBuilder: (TextEditingValue textEditingValue) {
-                    if (textEditingValue.text.isEmpty) {
-                      return const Iterable<String>.empty();
-                    }
-                    return _customerSuggestions.where((option) =>
-                        option.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                  },
-                  onSelected: (value) => _customerController.text = value,
-                  fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                    _customerController = controller;
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
+                Stack(
+                  children: [
+                    TextFormField(
+                      controller: _customerController,
+                      focusNode: _customerFocusNode,
                       decoration: const InputDecoration(
                         hintText: 'Search or enter customer name',
                         border: OutlineInputBorder(),
+                        filled: true,
+                        fillColor: Colors.white,
                       ),
-                    );
-                  },
+                      onChanged: _onCustomerTextChanged,
+                    ),
+                    // Suggestions List - FIXED: Wrapped in Material
+                    if (_showSuggestions && _filteredSuggestions.isNotEmpty)
+                      Positioned(
+                        top: 60,
+                        left: 0,
+                        right: 0,
+                        child: Material(
+                          elevation: 4,
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.white,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 150),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: _filteredSuggestions.length,
+                              itemBuilder: (context, index) {
+                                return ListTile(
+                                  title: Text(_filteredSuggestions[index]),
+                                  onTap: () => _selectCustomer(_filteredSuggestions[index]),
+                                  trailing: const Icon(Icons.person, size: 16, color: AppColors.gold),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 24),
 
@@ -640,7 +816,11 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                           )
                         : Text(
                             'SELL - ${AppConstants.formatMwk(item.sellPrice * _quantity)}',
-                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                   ),
                 ),
@@ -653,6 +833,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     );
   }
 
+  // ============================================================
+  // HELPER WIDGETS
+  // ============================================================
   Widget _buildInfoCard(String label, String value, Color color) {
     return Expanded(
       child: Container(
@@ -664,9 +847,23 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         ),
         child: Column(
           children: [
-            Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 4),
-            Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),
@@ -675,12 +872,18 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
 
   IconData _getCategoryIcon(String category) {
     switch (category) {
-      case 'Necklace': return Icons.circle_outlined;
-      case 'Ring': return Icons.circle;
-      case 'Earrings': return Icons.bolt;
-      case 'Bracelet': return Icons.timeline;
-      case 'Anklet': return Icons.settings_ethernet;
-      default: return Icons.category_outlined;
+      case 'Necklace':
+        return Icons.circle_outlined;
+      case 'Ring':
+        return Icons.circle;
+      case 'Earrings':
+        return Icons.bolt;
+      case 'Bracelet':
+        return Icons.timeline;
+      case 'Anklet':
+        return Icons.settings_ethernet;
+      default:
+        return Icons.category_outlined;
     }
   }
 }

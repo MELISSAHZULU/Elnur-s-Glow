@@ -1,9 +1,8 @@
-// lib/screens/owner_profile_screen.dart
+// lib/screens/owner_profile_screen.dart - WITHOUT IMAGE PICKER
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import '../utils/constants.dart';
+import '../widgets/bottom_nav_bar.dart';
 
 class OwnerProfileScreen extends StatefulWidget {
   const OwnerProfileScreen({super.key});
@@ -23,7 +22,6 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   String? _errorMessage;
-  File? _profileImage;
   String _selectedCurrency = 'MWK';
   int _lowStockAlert = 3;
 
@@ -36,7 +34,6 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
   }
 
   Future<void> _loadProfileData() async {
-    // Set loading to true at start
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -48,7 +45,11 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
       final doc = await FirebaseFirestore.instance
           .collection('settings')
           .doc('profile')
-          .get();
+          .get()
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => throw Exception('Loading timed out. Please check your connection.'),
+          );
       
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
@@ -61,7 +62,6 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
         _lowStockAlert = data['low_stock_alert'] ?? 3;
       }
     } catch (e) {
-      // Use defaults on error
       _nameController.text = 'Ehur';
       _businessController.text = "Ehur's Glow Accessories";
       _phoneController.text = '';
@@ -76,36 +76,10 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
         });
       }
     } finally {
-      // IMPORTANT: Always set loading to false when done
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
-      }
-    }
-  }
-
-  Future<void> _pickImage() async {
-    if (_isSaving) return;
-    
-    try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 400,
-        maxHeight: 400,
-        imageQuality: 80,
-      );
-      if (pickedFile != null) {
-        if (mounted) {
-          setState(() => _profileImage = File(pickedFile.path));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error picking image')),
-        );
       }
     }
   }
@@ -132,7 +106,11 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
         'currency': _selectedCurrency,
         'low_stock_alert': _lowStockAlert,
         'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      }, SetOptions(merge: true))
+      .timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw Exception('Save timed out. Please check your connection.'),
+      );
       
       await _updateItemAlerts();
       
@@ -148,7 +126,7 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Error saving profile: $e';
+        _errorMessage = 'Error: $e';
         _isSaving = false;
       });
       if (mounted) {
@@ -164,14 +142,18 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
 
   Future<void> _updateItemAlerts() async {
     try {
-      final items = await FirebaseFirestore.instance.collection('items').get();
+      final items = await FirebaseFirestore.instance
+          .collection('items')
+          .get()
+          .timeout(const Duration(seconds: 10));
+      
       for (var doc in items.docs) {
         await FirebaseFirestore.instance
             .collection('items')
             .doc(doc.id)
             .update({
           'low_stock_alert': _lowStockAlert,
-        });
+        }).timeout(const Duration(seconds: 10));
       }
     } catch (e) {
       // Silently fail - not critical
@@ -229,64 +211,38 @@ class _OwnerProfileScreenState extends State<OwnerProfileScreen> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    // Profile Photo
-                    GestureDetector(
-                      onTap: _isSaving ? null : _pickImage,
-                      child: Column(
-                        children: [
-                          Stack(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    colors: [AppColors.gold, AppColors.goldLight],
-                                  ),
-                                ),
-                                child: CircleAvatar(
-                                  radius: 50,
-                                  backgroundColor: AppColors.goldLight,
-                                  backgroundImage: _profileImage != null
-                                      ? FileImage(_profileImage!)
-                                      : null,
-                                  child: _profileImage == null
-                                      ? const Icon(
-                                          Icons.person,
-                                          size: 50,
-                                          color: AppColors.gold,
-                                        )
-                                      : null,
-                                ),
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: const BoxDecoration(
-                                    color: AppColors.gold,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.camera_alt,
-                                    size: 18,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Tap to change photo',
-                            style: TextStyle(
-                              color: AppColors.grey,
-                              fontSize: 12,
+                    // ============================================================
+                    // PROFILE PHOTO - PLACEHOLDER (No image picker)
+                    // ============================================================
+                    Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors: [AppColors.gold, AppColors.goldLight],
                             ),
                           ),
-                        ],
-                      ),
+                          child: const CircleAvatar(
+                            radius: 50,
+                            backgroundColor: AppColors.goldLight,
+                            child: Icon(
+                              Icons.person,
+                              size: 50,
+                              color: AppColors.gold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Owner Profile',
+                          style: TextStyle(
+                            color: AppColors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                     
                     const SizedBox(height: 24),

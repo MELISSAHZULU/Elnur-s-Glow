@@ -1,3 +1,4 @@
+// lib/models/item_model.dart - WITH NULL SAFE FALLBACKS
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/constants.dart';
 
@@ -29,13 +30,34 @@ class Item {
     required this.updatedAt,
   }) : profit = sellPrice - costPrice;
 
+  // ============================================================
+  // FIX: Add null-safe fallbacks for ALL fields
+  // ============================================================
   factory Item.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    Map<String, dynamic>? data = doc.data() as Map<String, dynamic>?;
+    
+    // If data is null, return empty item
+    if (data == null) {
+      return Item(
+        id: doc.id,
+        name: 'Unknown',
+        category: 'Other',
+        description: '',
+        costPrice: 0,
+        sellPrice: 0,
+        stockQuantity: 0,
+        photoUrl: null,
+        lowStockAlert: 3,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      );
+    }
+
     return Item(
       id: doc.id,
-      name: data['name'] ?? '',
-      category: data['category'] ?? '',
-      description: data['description'] ?? '',
+      name: data['name'] ?? 'Unknown',
+      category: data['category'] ?? 'Other',
+      description: data['description'] ?? '',  // ← FIX: Handle missing description
       costPrice: data['cost_price'] ?? 0,
       sellPrice: data['sell_price'] ?? 0,
       stockQuantity: data['stock_quantity'] ?? 0,

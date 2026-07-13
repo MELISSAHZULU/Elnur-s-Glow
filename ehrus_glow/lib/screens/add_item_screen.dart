@@ -1,4 +1,4 @@
-// lib/screens/add_item_screen.dart - WITHOUT IMAGES
+// lib/screens/add_item_screen.dart - WITH DESCRIPTION FIELD
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/constants.dart';
@@ -13,6 +13,7 @@ class AddItemScreen extends StatefulWidget {
 class _AddItemScreenState extends State<AddItemScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();  // ← NEW
   String _selectedCategory = 'Necklace';
   final _costPriceController = TextEditingController();
   final _sellPriceController = TextEditingController();
@@ -36,12 +37,12 @@ class _AddItemScreenState extends State<AddItemScreen> {
       final itemData = {
         'name': _nameController.text.trim(),
         'category': _selectedCategory,
-        'description': '',
+        'description': _descriptionController.text.trim(),  // ← NEW
         'cost_price': int.parse(_costPriceController.text),
         'sell_price': int.parse(_sellPriceController.text),
         'profit': int.parse(_sellPriceController.text) - int.parse(_costPriceController.text),
         'stock_quantity': int.parse(_stockController.text),
-        'photo_url': null,  // ← No photo
+        'photo_url': null,
         'low_stock_alert': 3,
         'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
@@ -147,13 +148,31 @@ class _AddItemScreenState extends State<AddItemScreen> {
                         enabled: !_isSaving,
                         decoration: const InputDecoration(
                           labelText: 'Item Name *',
-                          hintText: 'e.g., Gold Floral Necklace',
+                          hintText: 'e.g., Rose Gold Crystal Brooch',
                           border: OutlineInputBorder(),
                           prefixIcon: Icon(Icons.label_outline),
                           filled: true,
                           fillColor: Colors.white,
                         ),
                         validator: (value) => value!.isEmpty ? 'Please enter a name' : null,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ============================================================
+                      // NEW: Description Field
+                      // ============================================================
+                      TextFormField(
+                        controller: _descriptionController,
+                        enabled: !_isSaving,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                          hintText: 'e.g., Rose gold plated with crystal center, 2 inches',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.description_outlined),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                        maxLines: 3,  // Allows up to 3 lines
                       ),
                       const SizedBox(height: 16),
 
@@ -230,8 +249,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
                         controller: _stockController,
                         enabled: !_isSaving,
                         decoration: const InputDecoration(
-                          labelText: 'Initial Stock *',
-                          hintText: 'e.g., 10',
+                          labelText: 'Stock Quantity *',
+                          hintText: 'e.g., 1 (for unique pieces)',
                           border: OutlineInputBorder(),
                           prefixIcon: Icon(Icons.inventory_outlined),
                           filled: true,
@@ -271,8 +290,32 @@ class _AddItemScreenState extends State<AddItemScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
 
+                      // Tip for unique pieces
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.lightbulb_outline, color: Colors.blue.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '💡 Tip: Enter each unique piece separately with Stock: 1 for better tracking.',
+                                style: TextStyle(color: Colors.blue.shade800, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Save Button
                       SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -325,6 +368,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _descriptionController.dispose();  // ← NEW
     _costPriceController.dispose();
     _sellPriceController.dispose();
     _stockController.dispose();

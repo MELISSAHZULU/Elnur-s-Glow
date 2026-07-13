@@ -1,4 +1,4 @@
-// lib/screens/item_detail_screen.dart
+// lib/screens/item_detail_screen.dart - WITH EDIT & DELETE
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -19,30 +19,160 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   List<String> _customerSuggestions = [];
   bool _isSelling = false;
   bool _isRestocking = false;
+  bool _isDeleting = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadCustomerSuggestions();
-  }
-
-  void _loadCustomerSuggestions() async {
-    try {
-      var snapshot = await FirebaseFirestore.instance
-          .collection('customers')
-          .orderBy('name')
-          .limit(10)
-          .get();
-      
-      setState(() {
-        _customerSuggestions = snapshot.docs.map((doc) => doc['name'] as String).toList();
-      });
-    } catch (e) {
-      // Silently fail
+  // ============================================================
+  // EDIT ITEM - Navigate to Edit Screen
+  // ============================================================
+  Future<void> _editItem(Item item) async {
+    // Show a simple edit dialog
+    final nameController = TextEditingController(text: item.name);
+    final costController = TextEditingController(text: item.costPrice.toString());
+    final sellController = TextEditingController(text: item.sellPrice.toString());
+    final stockController = TextEditingController(text: item.stockQuantity.toString());
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('✏️ Edit Item'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Item Name'),
+              ),
+              TextField(
+                controller: costController,
+                decoration: const InputDecoration(labelText: 'Cost Price (MWK)'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: sellController,
+                decoration: const InputDecoration(labelText: 'Selling Price (MWK)'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: stockController,
+                decoration: const InputDecoration(labelText: 'Stock Quantity'),
+                keyboardType: TextInputType.number,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.gold,
+            ),
+            child: const Text('Save Changes'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == true) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('items')
+            .doc(widget.itemId)
+            .update({
+          'name': nameController.text.trim(),
+          'cost_price': int.parse(costController.text),
+          'sell_price': int.parse(sellController.text),
+          'profit': int.parse(sellController.text) - int.parse(costController.text),
+          'stock_quantity': int.parse(stockController.text),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Item updated successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          setState(() {});
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
 
-  // ==================== SELL ITEM ====================
+  // ============================================================
+  // DELETE ITEM
+  // ============================================================
+  Future<void> _deleteItem() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('🗑️ Delete Item'),
+        content: const Text(
+          'Are you sure you want to delete this item? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      setState(() => _isDeleting = true);
+      
+      try {
+        await FirebaseFirestore.instance
+            .collection('items')
+            .doc(widget.itemId)
+            .delete();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Item deleted successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } catch (e) {
+        setState(() => _isDeleting = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // SELL ITEM
+  // ============================================================
   Future<void> _sellItem(Item item) async {
     if (item.stockQuantity < _quantity) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -55,7 +185,6 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
 
     if (_customerController.text.trim().isEmpty) {
-      // Optional: Ask if they want to sell to walk-in
       final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -161,7 +290,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
-  // ==================== RESTOCK ITEM ====================
+  // ============================================================
+  // RESTOCK ITEM
+  // ============================================================
   Future<void> _restockItem(Item item) async {
     int addQty = 0;
     final result = await showDialog<int>(
@@ -251,6 +382,28 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _loadCustomerSuggestions();
+  }
+
+  void _loadCustomerSuggestions() async {
+    try {
+      var snapshot = await FirebaseFirestore.instance
+          .collection('customers')
+          .orderBy('name')
+          .limit(10)
+          .get();
+      
+      setState(() {
+        _customerSuggestions = snapshot.docs.map((doc) => doc['name'] as String).toList();
+      });
+    } catch (e) {
+      // Silently fail
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.cream,
@@ -265,6 +418,38 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           'Item Details',
           style: TextStyle(color: AppColors.charcoal, fontWeight: FontWeight.w600),
         ),
+        actions: [
+          // ============================================================
+          // EDIT BUTTON
+          // ============================================================
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, color: AppColors.gold),
+            onPressed: () async {
+              final doc = await FirebaseFirestore.instance
+                  .collection('items')
+                  .doc(widget.itemId)
+                  .get();
+              if (doc.exists) {
+                _editItem(Item.fromFirestore(doc));
+              }
+            },
+            tooltip: 'Edit Item',
+          ),
+          // ============================================================
+          // DELETE BUTTON
+          // ============================================================
+          IconButton(
+            icon: _isDeleting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.delete_outline, color: Colors.red),
+            onPressed: _isDeleting ? null : _deleteItem,
+            tooltip: 'Delete Item',
+          ),
+        ],
       ),
       body: FutureBuilder<DocumentSnapshot>(
         future: FirebaseFirestore.instance
@@ -287,25 +472,20 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Image
+                // Category Icon
                 Container(
-                  height: 250,
-                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: AppColors.goldLight,
-                    borderRadius: BorderRadius.circular(20),
-                    image: item.photoUrl != null && item.photoUrl!.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(item.photoUrl!),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: item.photoUrl == null || item.photoUrl!.isEmpty
-                      ? const Icon(Icons.image_outlined, color: AppColors.gold, size: 70)
-                      : null,
+                  child: Icon(
+                    _getCategoryIcon(item.category),
+                    color: AppColors.gold,
+                    size: 30,
+                  ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
                 Text(
                   item.name,
@@ -491,5 +671,16 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         ),
       ),
     );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Necklace': return Icons.circle_outlined;
+      case 'Ring': return Icons.circle;
+      case 'Earrings': return Icons.bolt;
+      case 'Bracelet': return Icons.timeline;
+      case 'Anklet': return Icons.settings_ethernet;
+      default: return Icons.category_outlined;
+    }
   }
 }

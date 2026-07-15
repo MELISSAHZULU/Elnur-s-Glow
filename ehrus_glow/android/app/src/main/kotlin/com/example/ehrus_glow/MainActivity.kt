@@ -1,5 +1,6 @@
-package com.example.ehrus_glow
+package com.ehrus.glow
 
 import io.flutter.embedding.android.FlutterActivity
 
-class MainActivity : FlutterActivity()
+class MainActivity: FlutterActivity() {
+}

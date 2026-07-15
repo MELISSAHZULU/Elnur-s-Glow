@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace = "com.ehrus.glow"
+    compileSdk = 35
+    ndkVersion = "28.2.13676358"
+
+    compileOptions {
+        // ============================================================
+        // FIX: Set both to Java 17
+        // ============================================================
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        applicationId = "com.ehrus.glow"
+        minSdkVersion = flutter.minSdkVersion
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+// ============================================================
+// FIX: Set Kotlin JVM target to match Java
+// ============================================================
+kotlin {
+    jvmToolchain(17)
+}
+
+flutter {
+    source = "../.."
+}
+
+apply plugin: 'com.google.gms.google-services'

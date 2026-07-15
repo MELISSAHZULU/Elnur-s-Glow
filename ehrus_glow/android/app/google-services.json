@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "943860119463",
+    "project_id": "elnur-s-glow",
+    "storage_bucket": "elnur-s-glow.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:943860119463:android:88b80b5ef9cb1a0fc7e882",
+        "android_client_info": {
+          "package_name": "com.ehrus.glow"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBT5t7C2T4oO-2j0uxPSxK4DigvlopXFDc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

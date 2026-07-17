@@ -1,5 +1,7 @@
+// lib/screens/profile_screen.dart - FULLY UPDATED WITH SIGN OUT
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:csv/csv.dart';
@@ -24,7 +26,131 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _currentIndex = 3;
   bool _isLoading = false;
 
-  // ==================== BACKUP DATA ====================
+  // ============================================================
+  // SIGN OUT
+  // ============================================================
+  Future<void> _signOut() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() => _isLoading = true);
+      try {
+        await FirebaseAuth.instance.signOut();
+        // AuthWrapper will automatically redirect to Login
+        // No need to navigate manually
+      } catch (e) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error signing out: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // ============================================================
+  // EXPORT SALES REPORT
+  // ============================================================
+  Future<void> _exportSalesReport() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('transactions')
+          .orderBy('date_time', descending: true)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No sales data to export')),
+        );
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // Calculate totals
+      int totalRevenue = 0;
+      int totalProfit = 0;
+      for (var doc in snapshot.docs) {
+        totalRevenue += (doc['total_revenue'] as int? ?? 0);
+        totalProfit += (doc['total_profit'] as int? ?? 0);
+      }
+
+      // Create CSV data
+      List<List<dynamic>> csvData = [
+        ['Sales Report - Ehur\'s Glow Accessories'],
+        ['Generated: ${DateTime.now().toString()}'],
+        ['Total Sales: ${snapshot.docs.length}'],
+        ['Total Revenue: ${AppConstants.formatMwk(totalRevenue)}'],
+        ['Total Profit: ${AppConstants.formatMwk(totalProfit)}'],
+        [],
+        ['Date', 'Item', 'Category', 'Customer', 'Quantity', 'Unit Price (MWK)', 'Total (MWK)', 'Profit (MWK)']
+      ];
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        csvData.add([
+          (data['date_time'] as Timestamp).toDate().toString().split(' ')[0],
+          data['item_name'] ?? '',
+          data['category'] ?? '',
+          data['customer_name'] ?? 'Walk-in',
+          data['quantity'] ?? 1,
+          data['unit_price'] ?? 0,
+          data['total_revenue'] ?? 0,
+          data['total_profit'] ?? 0,
+        ]);
+      }
+
+      // Save file
+      final directory = await getApplicationDocumentsDirectory();
+      final fileName = 'sales_report_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final file = File('${directory.path}/$fileName');
+      final csv = const ListToCsvConverter().convert(csvData);
+      await file.writeAsString(csv);
+
+      // Share the file
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '📊 Sales Report from Ehur\'s Glow Accessories\n\n'
+              'Total Sales: ${snapshot.docs.length}\n'
+              'Total Revenue: ${AppConstants.formatMwk(totalRevenue)}\n'
+              'Total Profit: ${AppConstants.formatMwk(totalProfit)}',
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ Report exported successfully!'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // ============================================================
+  // BACKUP DATA
+  // ============================================================
   Future<void> _backupData() async {
     setState(() => _isLoading = true);
     
@@ -91,16 +217,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ],
         ),
       );
+      setState(() => _isLoading = false);
     } catch (e) {
+      setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error backing up: $e'), backgroundColor: Colors.red),
       );
-    } finally {
-      setState(() => _isLoading = false);
     }
   }
 
-  // ==================== SHARE APP ====================
+  // ============================================================
+  // SHARE APP
+  // ============================================================
   Future<void> _shareApp() async {
     await Share.share(
       '💎 Ehur\'s Glow Accessories\n\n'
@@ -119,7 +247,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ==================== CHECK LOW STOCK ====================
+  // ============================================================
+  // CHECK LOW STOCK
+  // ============================================================
   Future<void> _checkLowStock() async {
     try {
       final profileDoc = await FirebaseFirestore.instance
@@ -129,7 +259,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       
       int threshold = 3;
       if (profileDoc.exists) {
-        threshold = (profileDoc.data() as Map<String, dynamic>)['low_stock_alert'] ?? 3;
+        final data = profileDoc.data() as Map<String, dynamic>;
+        threshold = data['low_stock_alert'] ?? 3;
       }
 
       final items = await FirebaseFirestore.instance
@@ -192,87 +323,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // ==================== EXPORT REPORT ====================
-  Future<void> _exportReport() async {
-    setState(() => _isLoading = true);
-    
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('transactions')
-          .orderBy('date_time', descending: true)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No sales data to export')),
-        );
-        setState(() => _isLoading = false);
-        return;
-      }
-
-      // Calculate totals
-      int totalRevenue = 0;
-      int totalProfit = 0;
-      for (var doc in snapshot.docs) {
-        totalRevenue += (doc['total_revenue'] as int? ?? 0);
-        totalProfit += (doc['total_profit'] as int? ?? 0);
-      }
-
-      // Create CSV data
-      List<List<dynamic>> csvData = [
-        ['Sales Report - Ehur\'s Glow Accessories'],
-        ['Generated: ${DateTime.now().toString()}'],
-        ['Total Sales: ${snapshot.docs.length}'],
-        ['Total Revenue: ${AppConstants.formatMwk(totalRevenue)}'],
-        ['Total Profit: ${AppConstants.formatMwk(totalProfit)}'],
-        [],
-        ['Date', 'Item', 'Category', 'Customer', 'Quantity', 'Unit Price (MWK)', 'Total (MWK)', 'Profit (MWK)']
-      ];
-
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        csvData.add([
-          (data['date_time'] as Timestamp).toDate().toString().split(' ')[0],
-          data['item_name'] ?? '',
-          data['category'] ?? '',
-          data['customer_name'] ?? 'Walk-in',
-          data['quantity'] ?? 1,
-          data['unit_price'] ?? 0,
-          data['total_revenue'] ?? 0,
-          data['total_profit'] ?? 0,
-        ]);
-      }
-
-      // Save file
-      final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'sales_report_${DateTime.now().millisecondsSinceEpoch}.csv';
-      final file = File('${directory.path}/$fileName');
-      final csv = const ListToCsvConverter().convert(csvData);
-      await file.writeAsString(csv);
-
-      // Share the file
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: '📊 Sales Report from Ehur\'s Glow Accessories\n\n'
-              'Total Sales: ${snapshot.docs.length}\n'
-              'Total Revenue: ${AppConstants.formatMwk(totalRevenue)}\n'
-              'Total Profit: ${AppConstants.formatMwk(totalProfit)}',
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Report exported successfully!'), backgroundColor: Colors.green),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error exporting: $e'), backgroundColor: Colors.red),
-      );
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    // Get current user
+    final user = FirebaseAuth.instance.currentUser;
+    
     return Scaffold(
       backgroundColor: AppColors.cream,
       appBar: AppBar(
@@ -298,7 +353,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
-            // Business Name Card
+            // ============================================================
+            // USER INFO CARD
+            // ============================================================
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -316,7 +373,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
-              child: Column(
+              child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(16),
@@ -324,43 +381,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       color: Colors.white,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.storefront,
-                      size: 50,
+                    child: Icon(
+                      user?.photoURL != null
+                          ? Icons.person
+                          : Icons.person_outline,
+                      size: 40,
                       color: AppColors.gold,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    "Ehur's Glow Accessories",
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.charcoal,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.person, size: 16, color: AppColors.grey),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Owner: Ehur',
-                        style: TextStyle(color: AppColors.grey, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      'Currency: MWK (Malawi Kwacha)',
-                      style: TextStyle(color: AppColors.charcoal, fontSize: 13),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user?.displayName ?? 'Ehur',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.charcoal,
+                          ),
+                        ),
+                        Text(
+                          user?.email ?? 'No email',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.grey,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            '✅ Active',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -368,7 +436,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Stats Cards
+            // ============================================================
+            // BUSINESS NAME CARD
+            // ============================================================
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.storefront,
+                    size: 40,
+                    color: AppColors.gold,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Ehur's Glow Accessories",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.charcoal,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Currency: MWK (Malawi Kwacha)',
+                    style: TextStyle(color: AppColors.grey, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ============================================================
+            // STATS CARDS
+            // ============================================================
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance.collection('items').snapshots(),
               builder: (context, itemSnapshot) {
@@ -404,7 +516,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 20),
 
-            // ==================== SETTINGS OPTIONS ====================
+            // ============================================================
+            // SETTINGS OPTIONS
+            // ============================================================
             Container(
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -419,7 +533,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               child: Column(
                 children: [
-                  // 1. Owner Profile - Navigates to Owner Profile Screen
+                  // 1. Owner Profile
                   _buildSettingsTile(
                     Icons.person_outline,
                     'Owner Profile',
@@ -431,7 +545,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const Divider(height: 1, thickness: 1, color: Colors.grey),
 
-                  // 2. Change Currency - Navigates to Currency Screen
+                  // 2. Change Currency
                   _buildSettingsTile(
                     Icons.currency_exchange,
                     'Change Currency',
@@ -443,7 +557,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const Divider(height: 1, thickness: 1, color: Colors.grey),
 
-                  // 3. Low Stock Alert - Navigates to Alert Screen
+                  // 3. Low Stock Alert
                   _buildSettingsTile(
                     Icons.notifications_outlined,
                     'Low Stock Alert',
@@ -455,16 +569,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const Divider(height: 1, thickness: 1, color: Colors.grey),
 
-                  // 4. Export Sales Report - Fully Functional
+                  // 4. Export Sales Report
                   _buildSettingsTile(
                     Icons.file_download_outlined,
                     'Export Sales Report',
                     'Export as CSV',
-                    _exportReport,
+                    _exportSalesReport,
                   ),
                   const Divider(height: 1, thickness: 1, color: Colors.grey),
 
-                  // 5. Backup Data - Fully Functional
+                  // 5. Backup Data
                   _buildSettingsTile(
                     Icons.backup_outlined,
                     'Backup Data',
@@ -473,19 +587,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const Divider(height: 1, thickness: 1, color: Colors.grey),
 
-                  // 6. Share App - Fully Functional
+                  // 6. Share App
                   _buildSettingsTile(
                     Icons.share_outlined,
                     'Share App',
                     'Share with friends',
                     _shareApp,
                   ),
+                  
+                  // ============================================================
+                  // 7. SIGN OUT (NEW!)
+                  // ============================================================
+                  const Divider(height: 1, thickness: 1, color: Colors.grey),
+                  _buildSettingsTile(
+                    Icons.logout,
+                    'Sign Out',
+                    'Sign out of your account',
+                    _signOut,
+                    isSignOut: true,  // ← Special styling
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
 
-            // Footer
+            // ============================================================
+            // FOOTER
+            // ============================================================
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -539,6 +667,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ============================================================
+  // HELPER WIDGETS
+  // ============================================================
   Widget _buildProfileStat(String label, String value) {
     return Expanded(
       child: Container(
@@ -552,11 +683,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Text(
               value,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.charcoal),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.charcoal,
+              ),
             ),
             Text(
               label,
-              style: TextStyle(fontSize: 12, color: AppColors.grey, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.grey,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),
@@ -564,27 +703,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildSettingsTile(IconData icon, String title, String subtitle, VoidCallback onTap) {
+  Widget _buildSettingsTile(
+    IconData icon,
+    String title,
+    String subtitle,
+    VoidCallback onTap, {
+    bool isSignOut = false,
+  }) {
     return Material(
       color: Colors.transparent,
       child: ListTile(
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: AppColors.goldLight.withOpacity(0.3),
+            color: isSignOut
+                ? Colors.red.withOpacity(0.1)
+                : AppColors.goldLight.withOpacity(0.3),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, color: AppColors.gold, size: 22),
+          child: Icon(
+            icon,
+            color: isSignOut ? Colors.red : AppColors.gold,
+            size: 22,
+          ),
         ),
         title: Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 15,
+            color: isSignOut ? Colors.red : AppColors.charcoal,
+          ),
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(fontSize: 12, color: AppColors.grey),
+          style: TextStyle(
+            fontSize: 12,
+            color: isSignOut ? Colors.red.shade300 : AppColors.grey,
+          ),
         ),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: AppColors.grey),
+        trailing: Icon(
+          Icons.arrow_forward_ios,
+          size: 14,
+          color: isSignOut ? Colors.red.shade300 : AppColors.grey,
+        ),
         onTap: onTap,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
